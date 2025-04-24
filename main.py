@@ -603,4 +603,4 @@ with tab_barrio:
 
 # Nota al pie
 st.markdown("---")
-st.caption("Dashboard creado con Streamlit y Plotly Express. Datos de delitos 2016-2023.")
+st.caption("Dashboard creado con Streamlit y Plotly Express. Datos de delitos 2019-2023.")
