@@ -16,44 +16,25 @@ st.markdown("Análisis de datos de delitos entre 2016-2023")
 def cargar_datos():
     import pandas as pd
     import re
-    import unicodedata
     
     df = pd.read_csv("datasets_delitos_2019_2023_limpio.csv")
     df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
     
-    # Guardar el valor original de comuna sin modificaciones
-    df['comuna_original'] = df['comuna']
-    df['comuna_display'] = df['comuna_original']
+    # Normalizar la columna comuna
+    df['comuna_original'] = df['comuna']  # Guardar valor original
+    df['comuna'] = pd.to_numeric(df['comuna'], errors='coerce')
     
-    # Mapeo oficial de barrios a comunas en Buenos Aires
-    mapeo_oficial_barrios = {
-        'AGRONOMIA': 15, 'ALMAGRO': 5, 'BALVANERA': 3, 'BARRACAS': 4, 
-        'BELGRANO': 13, 'BOEDO': 5, 'CABALLITO': 6, 'CHACARITA': 15, 
-        'COGHLAN': 12, 'COLEGIALES': 13, 'CONSTITUCION': 1, 'FLORES': 7, 
-        'FLORESTA': 10, 'LA BOCA': 4, 'LA PATERNAL': 15, 'LINIERS': 9, 
-        'MATADEROS': 9, 'MONTE CASTRO': 10, 'MONSERRAT': 1, 'NUEVA POMPEYA': 4, 
-        'NUÑEZ': 13, 'PALERMO': 14, 'PARQUE AVELLANEDA': 9, 'PARQUE CHACABUCO': 7, 
-        'PARQUE CHAS': 15, 'PARQUE PATRICIOS': 4, 'PUERTO MADERO': 1, 'RECOLETA': 2, 
-        'RETIRO': 1, 'SAAVEDRA': 12, 'SAN CRISTOBAL': 3, 'SAN NICOLAS': 1, 
-        'SAN TELMO': 1, 'VELEZ SARSFIELD': 10, 'VERSALLES': 10, 'VILLA CRESPO': 15, 
-        'VILLA DEL PARQUE': 11, 'VILLA DEVOTO': 11, 'VILLA GENERAL MITRE': 11, 
-        'VILLA LUGANO': 8, 'VILLA LURO': 10, 'VILLA ORTUZAR': 15, 'VILLA PUEYRREDON': 12, 
-        'VILLA REAL': 10, 'VILLA RIACHUELO': 8, 'VILLA SANTA RITA': 11, 
-        'VILLA SOLDATI': 8, 'VILLA URQUIZA': 12, 'PARQUE AVELLANEDA': 9
-    }
-    
-    # Función para normalizar nombres de barrios
-    def normalizar_texto(texto):
-        if pd.isna(texto) or texto == 0 or str(texto).strip() == '0':
+    def limpiar_comuna(valor):
+        if pd.isna(valor) or valor == 0:
             return "Sin datos"
-        if isinstance(texto, str):
-            # Convertir a mayúsculas
-            texto = texto.upper().strip()
-            # Normalizar acentos
-            texto = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
-            # Eliminar caracteres especiales
-            texto = re.sub(r'[^\w\s]', '', texto)
-        return texto
+        if isinstance(valor, str) and re.match(r'CC-\d+', valor):
+            return re.search(r'(\d+)', valor).group(1)
+        return str(valor).replace('.0', '')  # Eliminar decimales si existen
+    
+    df['comuna_display'] = df['comuna'].apply(limpiar_comuna)
+    
+    # Normalizar también la columna barrio
+    df['barrio_original'] = df['barrio']  # Guardar valor original
     
     # Limpiar valores de barrio
     def limpiar_barrio(valor):
@@ -61,37 +42,7 @@ def cargar_datos():
             return "Sin datos"
         return str(valor).strip()
     
-    # Función para limpiar el valor de comuna
-    def limpiar_comuna(valor):
-        if pd.isna(valor) or valor == 0:
-            return "Sin datos"
-        if isinstance(valor, str) and re.match(r'CC-\d+', valor):
-            return re.search(r'(\d+)', valor).group(1)
-        return str(valor).replace('.0', '')
-    
-    # Aplicar limpieza y normalización
-    df['barrio_original'] = df['barrio']
     df['barrio'] = df['barrio'].apply(limpiar_barrio)
-    df['barrio_norm'] = df['barrio'].apply(normalizar_texto)
-    df['comuna_limpia'] = df['comuna'].apply(limpiar_comuna)
-    
-    # Predecir comuna basada en barrio cuando sea necesario
-    def asignar_comuna_por_barrio(row):
-        # Si ya tiene comuna válida, mantenerla
-        if row['comuna_limpia'] not in ["Sin datos", "nan"] and row['comuna_limpia'] != "":
-            return row['comuna_limpia']
-        
-        # Si tiene barrio, intentar predecir la comuna
-        if row['barrio_norm'] in mapeo_oficial_barrios:
-            return str(mapeo_oficial_barrios[row['barrio_norm']])
-            
-        return row['comuna_limpia']  # Mantener el valor original si no se puede predecir
-    
-    # Crear comuna_corregida
-    df['comuna_corregida'] = df.apply(asignar_comuna_por_barrio, axis=1)
-    
-    # Actualizar comuna_display para usar el valor corregido
-    df['comuna_display'] = df['comuna_corregida']
     
     return df
 
