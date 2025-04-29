@@ -14,36 +14,12 @@ st.markdown("Análisis de datos de delitos entre 2016-2023")
 # Leer CSV con manejo mejorado de comunas
 @st.cache_data
 def cargar_datos():
-    import pandas as pd
-    import re
+
     
     df = pd.read_csv("datasets_delitos_2019_2023_limpio.csv")
+    df = df.convert_dtypes()
     df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
-    
-    # Normalizar la columna comuna
-    df['comuna_original'] = df['comuna']  # Guardar valor original
-    df['comuna'] = pd.to_numeric(df['comuna'], errors='coerce')
-    
-    def limpiar_comuna(valor):
-        if pd.isna(valor) or valor == 0:
-            return "Sin datos"
-        if isinstance(valor, str) and re.match(r'CC-\d+', valor):
-            return re.search(r'(\d+)', valor).group(1)
-        return str(valor).replace('.0', '')  # Eliminar decimales si existen
-    
-    df['comuna_display'] = df['comuna'].apply(limpiar_comuna)
-    
-    # Normalizar también la columna barrio
-    df['barrio_original'] = df['barrio']  # Guardar valor original
-    
-    # Limpiar valores de barrio
-    def limpiar_barrio(valor):
-        if pd.isna(valor) or valor == 0 or str(valor).strip() == '0':
-            return "Sin datos"
-        return str(valor).strip()
-    
-    df['barrio'] = df['barrio'].apply(limpiar_barrio)
-    
+
     return df
 
 df = cargar_datos()
@@ -104,7 +80,7 @@ with col3:
 
 with col4:
     # Excluir "Sin datos" del conteo de comunas
-    comunas_afectadas = df_filtrado[df_filtrado['comuna_display'] != 'Sin datos']['comuna_display'].nunique()
+    comunas_afectadas = df_filtrado[df_filtrado['comuna'] != 0]['comuna'].nunique()
     st.metric("Comunas Afectadas", comunas_afectadas)
 
 # Gráficos
@@ -190,40 +166,10 @@ st.plotly_chart(fig_heatmap, use_container_width=True)
 # Gráfico 5: Mapa de delitos
 st.header("Mapa de Delitos")
 
-# Comprobar si hay suficientes datos
-if not df_filtrado.empty:
-    # Crear una copia para trabajar con el mapa
-    df_mapa = df_filtrado.copy()
-    
-    # 1. Convertir coordenadas a formato numérico si no lo están
-    df_mapa['latitud'] = pd.to_numeric(df_mapa['latitud'], errors='coerce')
-    df_mapa['longitud'] = pd.to_numeric(df_mapa['longitud'], errors='coerce')
-    
-    # 2. Detectar y corregir el formato de las coordenadas
-    # Verificar si hay coordenadas extremas que necesiten normalización
-    lat_min, lat_max = df_mapa['latitud'].min(), df_mapa['latitud'].max()
-    lon_min, lon_max = df_mapa['longitud'].min(), df_mapa['longitud'].max()
-    
-    # Normalizar solo si los valores son extremos
-    if abs(lat_min) > 100 or abs(lat_max) > 100:
-        # Crear nuevas columnas normalizadas
-        df_mapa['latitud_map'] = df_mapa['latitud'] / 1000000
-    else:
-        df_mapa['latitud_map'] = df_mapa['latitud']
-    
-    if abs(lon_min) > 100 or abs(lon_max) > 100:
-        df_mapa['longitud_map'] = df_mapa['longitud'] / 1000000
-    else:
-        df_mapa['longitud_map'] = df_mapa['longitud']
-    
-    # 3. Filtrar solo valores razonables para Buenos Aires
-    df_mapa = df_mapa[(df_mapa['latitud_map'] > -35) & (df_mapa['latitud_map'] < -34) & 
-                     (df_mapa['longitud_map'] > -59) & (df_mapa['longitud_map'] < -58)]
-    
-    # 4. Preparar datos para el mapa coroplético
+#     # 4. Preparar datos para el mapa coroplético
 try:
     # Agrupar delitos por barrio para el mapa
-    delitos_por_barrio = df_filtrado[df_filtrado['barrio'] != "Sin datos"].groupby('barrio').size().reset_index(name='cantidad')
+    delitos_por_barrio = df_filtrado.groupby('barrio').size().reset_index(name='cantidad')
     
     # Cargar GeoJSON con los límites de los barrios de Buenos Aires
     import requests
@@ -251,63 +197,14 @@ try:
     for feature in barrios_geojson['features']:
         feature['id'] = feature['properties'][barrio_key].upper()  # Convertir a mayúsculas para coincidir
     
-    # Normalizar nombres de barrios para mejorar coincidencia
-    delitos_por_barrio['barrio_norm'] = delitos_por_barrio['barrio'].str.upper().str.strip()
     
-    # Verificar coincidencias entre nuestros datos y el GeoJSON
-    barrios_geojson_set = set()
-    for feature in barrios_geojson['features']:
-        barrios_geojson_set.add(feature['id'])
-    barrios_datos_set = set(delitos_por_barrio['barrio_norm'])
-
-    barrios_coincidentes = barrios_geojson_set.intersection(barrios_datos_set)
-
-    # Filtrar solo los barrios que coinciden con el GeoJSON para evitar errores
-    delitos_por_barrio_filtrado = delitos_por_barrio[delitos_por_barrio['barrio_norm'].isin(barrios_coincidentes)]
-
-    # Verificar si hay suficientes coincidencias
-    if len(barrios_coincidentes) == 0 or len(delitos_por_barrio_filtrado) == 0:
-        st.error("No se encontraron coincidencias entre los barrios de tus datos y el GeoJSON.")
-        st.warning("Intentando con un método alternativo de normalización...")
-        
-        # Método alternativo: usar aproximaciones de nombres
-        # Remover acentos, espacios y caracteres especiales
-        import unicodedata
-        import re
-        
-        def normalizar_texto(texto):
-            if isinstance(texto, str):
-                # Normalizar a NFD y eliminar diacríticos
-                texto = unicodedata.normalize('NFD', texto).encode('ascii', 'ignore').decode('ascii')
-                # Convertir a mayúsculas y eliminar caracteres no alfanuméricos
-                texto = re.sub(r'[^A-Z0-9]', '', texto.upper())
-                return texto
-            return str(texto).upper()  # Manejar casos de valores no string
-        
-        # Normalizar ambos conjuntos
-        for feature in barrios_geojson['features']:
-            feature['id'] = normalizar_texto(feature['properties'][barrio_key])
-        
-        delitos_por_barrio['barrio_norm'] = delitos_por_barrio['barrio'].apply(normalizar_texto)
-        
-        # Verificar nuevamente las coincidencias
-        barrios_geojson_set = set()
-        for feature in barrios_geojson['features']:  # Corregido para evitar usar solo el último
-            barrios_geojson_set.add(feature['id'])
-        barrios_datos_set = set(delitos_por_barrio['barrio_norm'])
-        barrios_coincidentes = barrios_geojson_set.intersection(barrios_datos_set)
-        st.write(f"Tras normalización adicional, coincidencias: {len(barrios_coincidentes)} de {len(barrios_datos_set)} barrios")
-        
-        # Actualizar el DataFrame filtrado con los nuevos barrios coincidentes
-        delitos_por_barrio_filtrado = delitos_por_barrio[delitos_por_barrio['barrio_norm'].isin(barrios_coincidentes)]
-
     # Ahora verificamos si tenemos datos para mostrar después de todos los intentos de coincidencia
-    if len(delitos_por_barrio_filtrado) > 0:
+    if len(delitos_por_barrio) > 0:
         # Crear el mapa coroplético
         fig_mapa = px.choropleth_mapbox(
-            delitos_por_barrio_filtrado,
+            delitos_por_barrio,
             geojson=barrios_geojson,
-            locations='barrio_norm',  # Usar la versión normalizada
+            locations='barrio',  # Usar la versión normalizada
             featureidkey='id',
             color='cantidad',
             color_continuous_scale="Reds",
@@ -330,69 +227,56 @@ try:
         st.plotly_chart(fig_mapa, use_container_width=True)
         
         # Información adicional sobre los datos mostrados en el mapa
-        st.info(f"El mapa muestra {delitos_por_barrio_filtrado['cantidad'].sum():,} delitos distribuidos en {len(delitos_por_barrio_filtrado)} barrios.")
+        st.info(f"El mapa muestra {delitos_por_barrio['cantidad'].sum():,} delitos distribuidos en {len(delitos_por_barrio)} barrios.")
     else:
         st.error("No se pudieron mapear los barrios. Mostrando mapa alternativo.")
         raise Exception("Sin coincidencias de barrios para el mapa coroplético")
         
 except Exception as e:
     st.error(f"Error al crear el mapa coroplético: {str(e)}")
-    st.info("Mostrando mapa de densidad alternativo...")
     
-    # Si hay un error con el mapa coroplético, mostrar un mapa de densidad
-    if not df_mapa.empty:
-        # Mapa de densidad como alternativa
-        fig_mapa = px.density_mapbox(
-            df_mapa,
-            lat='latitud_map',
-            lon='longitud_map',
-            z='cantidad',
-            radius=10,
-            center={"lat": -34.6, "lon": -58.4},
-            zoom=10,
-            mapbox_style="carto-positron",
-            title="Mapa de Densidad de Delitos (alternativo)"
-        )
-        
-        fig_mapa.update_layout(height=600)
-        st.plotly_chart(fig_mapa, use_container_width=True)
-    else:
-        st.error("No hay datos válidos para mostrar en el mapa después de la corrección de coordenadas.")
-        st.write("Prueba seleccionando diferentes tipos de delitos o años.")
-
+    
 # Análisis por comunas
 st.header("Análisis por Comuna")
-# Filtrar comunas sin datos antes de agrupar
-df_comunas_filtrado = df_filtrado[df_filtrado['comuna_display'] != 'Sin datos']
-# Usar comuna_display en lugar de comuna para evitar duplicados con decimales
-delitos_por_comuna = df_comunas_filtrado.groupby('comuna_display').size().reset_index(name='cantidad')
-delitos_por_comuna = delitos_por_comuna.sort_values('cantidad', ascending=False)
+# Filtrar comunas con delitos y agrupar por comuna
+df_comunas_filtrado = df_filtrado[df_filtrado['comuna'] != 0]
+delitos_por_comuna = df_comunas_filtrado.groupby('comuna').size().reset_index(name='cantidad')
 
+# Ordenar de mayor a menor y seleccionar las 10 comunas con más delitos
+delitos_por_comuna = delitos_por_comuna.sort_values('cantidad', ascending=False).head(10)
+
+# Gráfico de barras para las Top 10 comunas
 fig_comunas = px.bar(
-    delitos_por_comuna.head(10),
-    x='comuna_display',  # Usar comuna_display
+    delitos_por_comuna,
+    x='comuna',  # Usar comuna
     y='cantidad',
     color='cantidad',
     color_continuous_scale='Reds',
     title='Top 10 Comunas con Mayor Número de Delitos',
-    labels={"comuna_display": "Comuna"}  # Etiqueta mejorada
+    labels={"comuna": "Comuna", "cantidad": "Cantidad de Delitos"}
 )
-# Añadir prefijo "Comuna" a las etiquetas del eje x
-fig_comunas.update_xaxes(tickprefix="Comuna ")
+
+# Configurar el diseño del gráfico
+fig_comunas.update_layout(
+    xaxis=dict(title="Comuna", tickprefix="Comuna "),
+    yaxis=dict(title="Cantidad de Delitos"),
+    height=500
+)
+
+# Mostrar el gráfico
 st.plotly_chart(fig_comunas, use_container_width=True)
 
 # Pie chart para tipos de delito por comuna seleccionada
 col1, col2 = st.columns(2)
 
 with col1:
-    # Permitir seleccionar una comuna - usar comuna_display (excluyendo "Sin datos")
-    comunas_lista = sorted([c for c in df_filtrado['comuna_display'].unique() 
-                          if c != 'nan' and c != 'Sin datos'])
+    # Permitir seleccionar una comuna
+    comunas_lista = sorted([c for c in df_filtrado['comuna'].unique() if c != 0])
     if comunas_lista:
         comuna_seleccionada = st.selectbox("Selecciona una comuna para analizar:", comunas_lista)
         
-        # Filtrar por la comuna seleccionada - usar comuna_display para evitar problemas de tipo
-        df_comuna = df_filtrado[df_filtrado['comuna_display'] == comuna_seleccionada]
+        # Filtrar por la comuna seleccionada
+        df_comuna = df_filtrado[df_filtrado['comuna'] == comuna_seleccionada]
         
         # Gráfico de delitos por tipo en la comuna seleccionada
         delitos_comuna_tipo = df_comuna.groupby('tipo').size().reset_index(name='cantidad')
@@ -428,9 +312,8 @@ tab_comuna, tab_barrio = st.tabs(["Explorar por Comuna", "Explorar por Barrio"])
 
 # Tab 1: Explorar por Comuna
 with tab_comuna:
-    # Seleccionar comuna - usar comuna_display (excluyendo "Sin datos")
-    comunas_lista = sorted([c for c in df_filtrado['comuna_display'].unique() 
-                          if c != 'nan' and c != 'Sin datos'])
+    # Seleccionar comuna - usar comuna (excluyendo "Sin datos")
+    comunas_lista = sorted([c for c in df_filtrado['comuna'].unique() if c != 0])
     if comunas_lista:
         comuna_seleccionada_tab = st.selectbox(
             "Selecciona una comuna:", 
@@ -439,14 +322,15 @@ with tab_comuna:
         )
         
         # Obtener barrios de la comuna seleccionada - asegurar comparación correcta
-        barrios_comuna = df_filtrado[df_filtrado['comuna_display'] == comuna_seleccionada_tab]['barrio'].unique()
+        barrios_comuna = df_filtrado[df_filtrado['comuna'] == comuna_seleccionada_tab]['barrio'].unique()
         
         # Mostrar lista de barrios en esta comuna
         st.subheader(f"Barrios en Comuna {comuna_seleccionada_tab}")
         
-        # Contar delitos por barrio en esta comuna - usar comuna_display
-        barrios_delitos = df_filtrado[(df_filtrado['comuna_display'] == comuna_seleccionada_tab) & 
-                            (df_filtrado['barrio'] != "Sin datos")].groupby('barrio').size().reset_index(name='cantidad')
+        # Contar delitos por barrio en esta comuna - usar comuna
+        barrios_delitos = df_filtrado[(df_filtrado['comuna'] == comuna_seleccionada_tab)].groupby('barrio').size().reset_index(name='cantidad')
+        
+
         barrios_delitos = barrios_delitos.sort_values('cantidad', ascending=False)
         
         # Gráfico de barras horizontal para los barrios
@@ -477,63 +361,19 @@ with tab_barrio:
         )
         
        # Obtener comuna(s) del barrio seleccionado - filtrar "Sin datos"
-        comunas_barrio = df_filtrado[(df_filtrado['barrio'] == barrio_seleccionado) & 
-                                  (df_filtrado['comuna_display'] != 'Sin datos')]['comuna_display'].unique()
+        comunas_barrio = df_filtrado[(df_filtrado['barrio'] == barrio_seleccionado)]
 
-        # Si hay comunas para este barrio
-        if len(comunas_barrio) > 0:
-            # Contar ocurrencias de cada comuna para este barrio - usar comuna_display
-            # Excluir "Sin datos" del conteo
-            comuna_counts = df_filtrado[(df_filtrado['barrio'] == barrio_seleccionado) & 
-                                     (df_filtrado['comuna_display'] != 'Sin datos')]['comuna_display'].value_counts()
-            comuna_principal = comuna_counts.idxmax()  # Comuna con más registros
+        
+        comuna_counts = df_filtrado[(df_filtrado['barrio'] == barrio_seleccionado) & 
+                                     (df_filtrado['comuna'] != 'Sin datos')]['comuna'].value_counts()
+        comuna_principal = comuna_counts.idxmax()  # Comuna con más registros
             
             # Definir comuna_barrio como la más frecuente
-            comuna_barrio = comuna_principal
+        comuna_barrio = comuna_principal
             
-            # En caso de que un barrio aparezca en múltiples comunas
-            if len(comunas_barrio) > 1:
-                st.warning(f"⚠️ El barrio {barrio_seleccionado} aparece en {len(comunas_barrio)} comunas diferentes.")
-                
-                # Crear DataFrame para mostrar la distribución
-                comuna_data = []
-                for comuna in comunas_barrio:
-                    count = df_filtrado[(df_filtrado['barrio'] == barrio_seleccionado) & 
-                                      (df_filtrado['comuna_display'] == comuna)].shape[0]
-                    porcentaje = (count / df_filtrado[(df_filtrado['barrio'] == barrio_seleccionado) & 
-                                                   (df_filtrado['comuna_display'] != 'Sin datos')].shape[0]) * 100
-                    comuna_data.append({
-                        "Comuna": f"Comuna {comuna}",
-                        "Cantidad": count,
-                        "Porcentaje": f"{porcentaje:.1f}%"
-                    })
-                
-                # Mostrar tabla de distribución
-                st.write("Distribución de delitos por comuna para este barrio:")
-                st.table(pd.DataFrame(comuna_data))
-                
-                # Mostrar distribución como gráfico de pastel (excluyendo "Sin datos")
-                comuna_barrio_count = df_filtrado[(df_filtrado['barrio'] == barrio_seleccionado) & 
-                                               (df_filtrado['comuna_display'] != 'Sin datos')].groupby('comuna_display').size().reset_index(name='cantidad')
-                
-                fig_comunas_barrio = px.pie(
-                    comuna_barrio_count,
-                    values='cantidad',
-                    names='comuna_display',  # Usar comuna_display
-                    title=f'Distribución de Delitos por Comuna en el Barrio {barrio_seleccionado}',
-                    color_discrete_sequence=px.colors.qualitative.Bold
-                )
-                st.plotly_chart(fig_comunas_barrio, use_container_width=True)
-                
-                # Mensaje aclaratorio
-                st.info(f"📌 Para los análisis siguientes, se considerará la Comuna {comuna_principal} (la más frecuente).")
-            else:
-                # Solo hay una comuna - mostrar mensaje normal
-                st.subheader(f"El barrio {barrio_seleccionado} pertenece a la Comuna {comuna_barrio}")
-        else:
-            # No hay comunas disponibles para este barrio
-            st.error(f"No se encontraron datos de comunas para el barrio {barrio_seleccionado}")
-            comuna_barrio = "No disponible"
+            
+        st.subheader(f"El barrio {barrio_seleccionado} pertenece a la Comuna {comuna_barrio}")
+       
         
         # Análisis de delitos en este barrio
         df_barrio = df_filtrado[df_filtrado['barrio'] == barrio_seleccionado]
@@ -575,9 +415,8 @@ with tab_barrio:
         if comuna_barrio != "No disponible":
             st.subheader(f"Comparativa con otros barrios de la Comuna {comuna_barrio}")
             
-            # Obtener todos los barrios de esta comuna - usar comuna_display para correcta comparación
-            barrios_misma_comuna = df_filtrado[(df_filtrado['comuna_display'] == comuna_barrio) & 
-                                 (df_filtrado['barrio'] != "Sin datos")].groupby('barrio').size().reset_index(name='cantidad')
+            # Obtener todos los barrios de esta comuna - usar comuna para correcta comparación
+            barrios_misma_comuna = df_filtrado[(df_filtrado['comuna'] == comuna_barrio)].groupby('barrio').size().reset_index(name='cantidad')
             barrios_misma_comuna = barrios_misma_comuna.sort_values('cantidad', ascending=False)
             
             # Resaltar el barrio seleccionado
@@ -604,3 +443,5 @@ with tab_barrio:
 # Nota al pie
 st.markdown("---")
 st.caption("Dashboard creado con Streamlit y Plotly Express. Datos de delitos 2019-2023.")
+
+
