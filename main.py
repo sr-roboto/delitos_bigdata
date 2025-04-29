@@ -343,7 +343,7 @@ with tab_comuna:
             color_continuous_scale='Blues',
             title=f'Distribución de Delitos por Barrio en Comuna {comuna_seleccionada_tab}'
         )
-        fig_barrios.update_layout(height=min(600, len(barrios_comuna) * 30 + 200))
+        # fig_barrios.update_layout(height=min(600, len(barrios_comuna) * 30 + 200))
         st.plotly_chart(fig_barrios, use_container_width=True)
         
         # Tabla con información adicional (opcional)
