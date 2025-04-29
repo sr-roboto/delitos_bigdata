@@ -9,7 +9,7 @@ st.set_page_config(page_title="Dashboard de Delitos", page_icon="🚨", layout="
 
 # Título del dashboard
 st.title('Dashboard de Delitos en Buenos Aires 🚨')
-st.markdown("Análisis de datos de delitos entre 2016-2023")
+st.markdown("Análisis de datos de delitos entre 2019-2023")
 
 # Leer CSV con manejo mejorado de comunas
 @st.cache_data
